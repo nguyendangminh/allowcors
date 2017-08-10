@@ -1,0 +1,17 @@
+--- 
+apis: 
+  - 
+    name: "API 1"
+    path: /api/1
+    target: "https://api.fpt.ai"
+  - 
+    name: "API 2"
+    path: /api/2
+    target: "http://api.openfpt.vn"
+web: "http://localhost:8080"
+port: 1203
+
+# Result
+# -> http://localhost:1203/api/1/users -> https://api.fpt.ai/users
+# -> http://localhost:1203/api/2/apps -> http://api.openfpt.vn/apps
+# -> http://localhost:1203/* -> http://localhost:8080/*
