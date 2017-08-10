@@ -10,11 +10,24 @@ import (
 	"strings"
 )
 
+type CORSReverseProxy struct {
+	proxy *httputil.ReverseProxy
+}
+
+func (p *CORSReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "OPTIONS" {
+		return
+	}
+	p.proxy.ServeHTTP(w, r)
+}
+
 func main() {
 	var targetURL string
 	var port int
-	flag.StringVar(&targetURL, "u", "http://minhnd.com", "Target URL")
+	var cors bool
+	flag.StringVar(&targetURL, "url", "http://minhnd.com", "Target URL")
 	flag.IntVar(&port, "p", 1203, "Port to bind")
+	flag.BoolVar(&cors, "cors", false, "Enable CORS")
 	flag.Parse()
 
 	target, err := url.Parse(targetURL)
@@ -22,8 +35,19 @@ func main() {
 		log.Fatal("Parse URL failed: ", err)
 	}
 
-	proxy := NewReverseProxy(target)
+	var proxy http.Handler
+	if cors {
+		proxy = NewCORSReverseProxy(target)
+	} else {
+		proxy = NewReverseProxy(target)
+	}
+
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), proxy))
+}
+
+func NewCORSReverseProxy(target *url.URL) *CORSReverseProxy {
+	proxy := NewReverseProxy(target)
+	return &CORSReverseProxy{proxy: proxy}
 }
 
 func NewReverseProxy(target *url.URL) *httputil.ReverseProxy {
