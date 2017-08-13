@@ -3,85 +3,68 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/spf13/viper"
-	"log"
+	"github.com/Sirupsen/logrus"
+	"gopkg.in/yaml.v2"
+	"io/ioutil"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
+	"os"
 	"strings"
 )
 
-type CORSReverseProxy struct {
-	proxy *httputil.ReverseProxy
-}
-
-func (p *CORSReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method == "OPTIONS" {
-		return
-	}
-	p.proxy.ServeHTTP(w, r)
-}
+var cfgFile string
+var isVerbose bool
+var cfg Config
+var proxies map[string]*CORSReverseProxy
 
 func main() {
-	var targetURL string
-	var port int
-	var cors bool
-	flag.StringVar(&targetURL, "url", "http://minhnd.com", "Target URL")
-	flag.IntVar(&port, "p", 1203, "Port to bind")
-	flag.BoolVar(&cors, "cors", false, "Enable CORS")
+	flag.StringVar(&cfgFile, "conf", "", "path to the config file")
+	flag.BoolVar(&isVerbose, "v", false, "be verbose")
 	flag.Parse()
+	if cfgFile == "" {
+		logrus.Error("Config file is required")
+		Usage()
+		os.Exit(1)
+	}
+	if isVerbose {
+		logrus.SetLevel(logrus.DebugLevel)
+	}
 
-	target, err := url.Parse(targetURL)
+	data, err := ioutil.ReadFile(cfgFile)
 	if err != nil {
-		log.Fatal("Parse URL failed: ", err)
+		logrus.Fatal("Reading config file failed. Error: ", err)
 	}
 
-	var proxy http.Handler
-	if cors {
-		proxy = NewCORSReverseProxy(target)
-	} else {
-		proxy = NewReverseProxy(target)
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		logrus.Fatal("Reading config file failed. Error: ", err)
 	}
 
-	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), proxy))
-}
-
-func NewCORSReverseProxy(target *url.URL) *CORSReverseProxy {
-	proxy := NewReverseProxy(target)
-	return &CORSReverseProxy{proxy: proxy}
-}
-
-func NewReverseProxy(target *url.URL) *httputil.ReverseProxy {
-	targetQuery := target.RawQuery
-	director := func(req *http.Request) {
-		req.URL.Scheme = target.Scheme
-		req.URL.Host = target.Host
-		req.URL.Path = singleJoiningSlash(target.Path, req.URL.Path)
-		if targetQuery == "" || req.URL.RawQuery == "" {
-			req.URL.RawQuery = targetQuery + req.URL.RawQuery
-		} else {
-			req.URL.RawQuery = targetQuery + "&" + req.URL.RawQuery
+	proxies = make(map[string]*CORSReverseProxy)
+	for _, b := range cfg.Backends {
+		p, err := NewCORSReverseProxy(b.Name, b.Path, b.Target)
+		if err != nil {
+			logrus.Fatalf("%s:\tURL %s is not valid. Error %s\n", b.Name, b.Target, err)
 		}
-		if _, ok := req.Header["User-Agent"]; !ok {
-			// explicitly disable User-Agent so it's not set to default value
-			req.Header.Set("User-Agent", "")
-		}
-		req.Header.Set("Host", target.Host)
-		req.Host = target.Host
-		log.Println(req.Host)
-		log.Println(req.URL)
+		logrus.Infof("%s:\t%s\t->\t%s", b.Name, b.Path, b.Target)
+		proxies[b.Path] = p
 	}
-	return &httputil.ReverseProxy{Director: director}
+	http.HandleFunc("/", dispatch)
+
+	logrus.Infof("Listen and serve at port %d", cfg.Port)
+	logrus.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", cfg.Port), nil))
 }
 
-func singleJoiningSlash(a, b string) string {
-	aslash := strings.HasSuffix(a, "/")
-	bslash := strings.HasPrefix(b, "/")
-	switch {
-	case aslash && bslash:
-		return a + b[1:]
-	case !aslash && !bslash:
-		return a + "/" + b
+func dispatch(w http.ResponseWriter, r *http.Request) {
+	for _, b := range cfg.Backends {
+		if strings.HasPrefix(r.URL.Path, b.Path) {
+			p, _ := proxies[b.Path]
+			p.ServeHTTP(w, r)
+			return
+		}
 	}
-	return a + b
+	logrus.Errorf("%s is not matched any paths", r.URL.Path)
+}
+
+func Usage() {
+	fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
+	flag.PrintDefaults()
 }
