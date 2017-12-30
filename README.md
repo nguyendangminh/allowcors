@@ -1,5 +1,5 @@
 # AllowCORS
-`AllowCORS` is a multi-backend reserve proxy. It's built to help developers bypass CORS.
+`AllowCORS` is a multi-backend reserve proxy. It's built to help developers to bypass same-origin policy.
 
 ## Install
 ```
